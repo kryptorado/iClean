@@ -1,0 +1,272 @@
+#!/bin/bash
+
+#This is a Bash script that attempts to reset a FLOATER to its original state
+#Author: Dora Goczi
+#Date: April 24th, 2018
+
+#Change these paths if you move around files
+DOCKUTIL=/volumes/kingston/resources/dockutil #Path to the Dockutil script(change this if path changes)
+
+CURRENT_APPS=/volumes/kingston/resources/text-files/my-apps-imac.txt
+
+DFLT_APPS=/volumes/kingston/resources/text-files/default-apps-imac.txt
+
+APPS_TO_DELETE=/volumes/kingston/resources/text-files/to-delete-imac.txt
+
+RESOURCES=/volumes/kingston/resources
+
+checkSetupDone(){
+    pkill -u $USER
+    if [ -f $HOME/Library/Preferences/com.corp.docksetup.plist ] ; then
+        exit 0
+    fi
+}
+
+checkIfRoot(){
+    pkill -u $USER
+    if [[ $EUID -ne 0 ]]; then
+        echo "This script must be run as root, use sudo "$0" instead" 1>&2
+   exit 1
+fi
+
+}
+
+configureDefaultDock()  {
+
+    $DOCKUTIL --remove all --no-restart
+
+    $DOCKUTIL --add '/Applications/Safari.app' --no-restart
+
+    $DOCKUTIL --add '/Applications/Google Chrome.app' --no-restart
+
+    $DOCKUTIL --add '/Applications/Utilities/Terminal.app' --no-restart
+
+    $DOCKUTIL --add '/Applications/System Preferences.app' --no-restart
+
+    $DOCKUTIL --add '/Applications/App Store.app' --no-restart
+
+    $DOCKUTIL --add '/Applications/Self Service.app' --no-restart
+
+    $DOCKUTIL --add '/Applications/Xcode.app' --no-restart
+
+    $DOCKUTIL --add '/Applications/IntelliJ IDEA.app' --no-restart
+
+    $DOCKUTIL --add '~/Downloads'
+}
+
+checkNetworkStatus(){
+    if ping -q -c 1 -W 1 8.8.8.8 >/dev/null;  then
+      echo "You are connected to the internet. Continuing the script..."
+    else
+      echo "Please make sure you are connected to the internet. Script has been terminated."
+      exit 0
+  fi
+}
+
+clearUserFiles(){
+    sudo rm -rf ~/Downloads/*
+    echo 'Cleared the Downloads folder'
+    sudo rm -rf ~/Desktop/*
+    echo 'Cleared the Desktop'
+    sudo rm -rf ~/Documents/*
+    echo 'Cleared the Documents folder'
+    sudo rm -rf ~/Movies/*
+    sudo rm -rf ~/Music/*
+    sudo rm -rf ~/Movies/*
+    sudo rm -rf ~/Pictures/*
+    sudo rm -rf ~/Public/*
+    echo 'Cleared some other folders in ~'
+    sudo rm -rf ~/.Trash/*
+    sudo rm -rf ~/.local/share/Trash/*
+    sudo rm -rf /volumes/kingston/.trashes/*
+    echo 'Cleared the Trash'
+  	sudo rm -rf ~/Library/Caches/*
+    sudo rm -rf /System/Library/Caches/*
+    sudo rm -rf /Library/Caches/*
+    echo 'Cleared the Caches'
+    echo 'Removing any leftovers...'
+    cd ~
+    #This removes any other user created folders other than the ones listed
+    sudo find -E . -regex './(Applications|Desktop|Documents|Downloads|Library|Movies|Music|Pictures|Public)' -and -prune -o -print -exec rm -rf {} \;
+}
+
+clearSystemFiles(){
+	sudo rm -rf /private/var/log/asl/*.asl &>/dev/null
+	sudo rm -rf ~/Library/Containers/com.apple.mail/Data/Library/Logs/Mail/* &>/dev/null
+	sudo rm -rf ~/Library/Logs/CoreSimulator/* &>/dev/null
+	sudo rm -rf /Library/Logs/*
+	sudo rm -rf /var/log/*
+	sudo rm -rf ~/Library/caches/*
+
+    cd /private/var/folders
+    for i in *; do if [ "$i" != "zz" ]; then sudo rm -rf "$i"; fi; done
+    sudo rm -rf zz/*
+}
+
+deleteUserInstalledApps(){
+    #Save current application names to txt file
+    echo 'Saving your current application list to $CURRENT_APPS' 
+    ls /applications > $CURRENT_APPS
+
+    #Return differences in lists
+    echo 'Deleting all the user installed apps...'
+    grep -Fxvf $DFLT_APPS $CURRENT_APPS > $APPS_TO_DELETE
+
+    #Remove all the found apps
+    cat $APPS_TO_DELETE | while read line
+    do
+        sudo mdfind -0 $line | xargs -0 rm -rf
+        sudo rm -rf $line
+    done
+
+    #If VMware is installed, run this uninstall script
+    cd $RESOURCES
+    if echo cat $CURRENT_APPS | grep -w "VMWare Fusion.app" > dev/null; then
+    ./uninstall-vmware.sh
+fi
+#The line below needs to be changed - if it finds any apps that have the word office in them, run the following script
+    if echo cat $CURRENT_APPS | grep -w "Office" > dev/null; then
+    ./uninstall-office-2011.sh
+fi
+}
+
+
+flushDNSCache(){
+    sudo killall -HUP mDNSResponder;sudo killall mDNSResponderHelper;sudo dscacheutil -flushcache
+}
+
+fixPurgable(){
+	#This funciton creates a large file in ~ and then deletes it
+	mkfile -n 100g temp_100GB_file
+	rm -rf temp_100GB_file
+}
+
+clearKeychainContents(){
+    #Deletes the keychain folder in the home directory(will be recreated when logged in again)
+    sudo rm -rf ~/Library/keychains
+}
+
+clearApplicationData(){
+	#Chrome
+	echo 'Clearing Chrome data'
+	sudo rm -rf ~/Library/Application\ Support/Google/Chrome
+
+	#Safari
+	echo 'Clearing Safari data'
+	launchctl unload /system/library/launchagents/com.apple.cookied.plist
+	sudo rm ~/library/caches/com.apple.safari.cache.db
+	sudo rm -rdf ~/library/caches/com.apple.safari/webpage\ previews
+	sudo rm -rdf ~/library/caches/quicktime/downloads
+	sudo rm ~/library/safari/history.plist
+	sudo rm ~/library/safari/downloads.plist
+	sudo rm ~/library/safari/topsites.plist
+	sudo rm ~/library/safari/lastsession.plist
+	sudo rm ~/library/saved\ application\ state/com.apple.safari.savedstate/*
+	sudo rm -rdf ~/library/safari/localstorage/
+	sudo rm -rdf ~/library/preferences/macromedia/flash\ player/macromedia.com/support/flashplayer/sys/#*
+	sudo rm -rdf ~/library/preferences/macromedia/flash\ player/#sharedobjects
+
+	#Other application caches
+	for x in $(ls ~/Library/Containers/)
+	do
+		rm -rf ~/Library/Containers/$x/Data/Library/Caches/*
+	done
+}
+
+changeBackground(){
+	osascript -e 'tell application "Finder" to set desktop picture to POSIX file "/Library/desktop pictures/Pivotal Wallpaper (Teal).png"'
+}
+
+clearBashHistory(){
+    cat /dev/null > ~/.bash_history
+    history -c
+}
+
+selfServiceShortcut(){
+    console_user = "$(/usr/bin/stat -f%Su /dev/console)"
+    ln -s /Applications/Self\ Service.app/ /Users/$console_user/Desktop/Click\ Me\ for\ Software
+}
+
+checkInToJamf(){
+	echo 'Flushing your policy history...'
+	sudo jamf flushpolicyhistory
+
+	echo 'Communicating your presence to JAMF...'
+	sudo jamf policy
+}
+
+ejectDisks(){
+
+    #Ejecting all user mounted disks
+    find /Volumes -maxdepth 1 -not -user root -print0 | xargs -0 diskutil eject
+    diskutil unmountDisk /dev/disk*
+
+    find /dev -name "disk[1-9]" -exec diskutil eject {} \;
+
+    #Ejecting all network volumes
+    find /Volumes -maxdepth 1 -not -user root -print0 | xargs -0 unmount 
+}
+
+main(){
+
+    echo 'Checking if you are connected to the internet...'
+    checkNetworkStatus
+
+    echo 'Killing all current processes...'
+    pkill -u $USER
+
+    echo 'Ejecting all user mounted disks and network volumes...'
+    ejectDisks
+
+    echo 'Removing any user files left...'
+    clearUserFiles
+
+    echo 'Deleting user installed apps...'
+    deleteUserInstalledApps
+
+    echo 'Removing system files...'
+    clearSystemFiles
+
+    echo 'Clearing application data...'
+    clearApplicationData
+
+    echo 'Clearing the dock and rebuilding it...'
+    #checkSetupDone #Checks if the dock was already set up
+    configureDefaultDock
+
+    echo 'Clearing keychain data...'
+    clearKeychainContents
+
+    echo 'Changing background...'
+    changeBackground
+
+    echo 'Creating desktop shortcut to self service...'
+    selfServiceShortcut
+
+    echo 'Fixing purgeable storage space'
+    fixPurgable
+
+    echo 'Checking in to JAMF...'
+    checkInToJamf
+
+    echo 'Flushing DNS Cache...'
+    flushDNSCache
+
+    echo 'Clearing your Bash history...'
+    clearBashHistory
+
+    echo 'Restarting...'
+    sudo reboot
+}
+
+checkIfRoot
+
+read -p "Are you sure you want to erase everything on this computer? " -n 1 -r
+echo    # (optional) move to a new line
+if [[ $REPLY =~ ^[Yy]$ ]]
+then
+    main
+fi
+
+
+exit 0
